@@ -1,0 +1,91 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Nov  1 09:47:37 2019
+
+@author: 大风君
+
+@知乎zhuanlan：https://zhuanlan.zhihu.com/c_1129337914383032320
+"""
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import KFold
+import warnings
+warnings.filterwarnings('ignore')
+
+def custom_fun(preds, labels):
+    temp=abs( preds- labels)
+    res=np.sum(temp)/(len(temp)*4)
+    result=1/(1+10*res)
+    return result
+
+def cuntom_metric(preds, train_data):
+    labels = train_data.get_label()
+    preds = np.reshape(preds, (len(labels), -1), order='F')
+    labels = OneHotEncoder(n_values=4, sparse=False).fit_transform(labels.reshape(-1, 1))
+    res = custom_fun(preds, labels)
+    return 'cuntom_metric', res, True
+
+def Lgb_Classifier(train_x, train_y,test_x,test_y):
+    import lightgbm as lgb
+    lgb_trn = lgb.Dataset(
+                        data=train_x,
+                        label=train_y,
+                        free_raw_data=True)
+    lgb_val = lgb.Dataset(
+                        data=test_x,
+                        label=test_y,
+                        free_raw_data=True)
+    
+    params_lgb = {'boosting_type': 'gbdt','objective': 'multiclass',
+                  'num_class': 4,  'metric': 'multi_error',
+                  'num_leaves': 168, 'learning_rate': 0.01, 'num_threads':-1}
+    fit_params_lgb = {'num_boost_round': 1000, 'verbose_eval':50,'early_stopping_rounds':50}
+    
+    lgb_reg = lgb.train(params=params_lgb, 
+                        train_set=lgb_trn, 
+                        **fit_params_lgb,
+                        valid_sets=[lgb_trn, lgb_val])
+    return lgb_reg
+
+
+def model_cv(train,test,esti,feature_names):
+    oof = np.zeros((train.shape[0],4))
+    cv_model=[]
+    kfolder = KFold(n_splits=nfold, shuffle=True, random_state=2019)
+    for fold_id, (train_index, test_index) in enumerate(kfolder.split(train)):
+        print(f'\nFold_{fold_id} Training ================================\n')
+        reg = {'LGB':Lgb_Classifier}
+        train_x, train_y = train.loc[train_index, feature_names], train.loc[train_index,ycol]
+        test_x, test_y = train.loc[test_index, feature_names], train.loc[test_index, ycol]
+        if esti=='LGB' :
+            model= reg[esti](train_x, train_y,test_x,test_y)
+            oof[test_index] = model.predict(test_x,num_iteration=model.best_iteration)
+            cv_model.append(model)
+            if len(test):
+                test.loc[:,submit.columns[1:]] += model.predict(test[feature_names],num_iteration=model.best_iteration+model.best_iteration) / nfold
+    return oof,test,cv_model
+
+
+ycol='result'
+nfold=5
+train = pd.read_csv('../../data/first_round_training_data.csv')
+test = pd.read_csv('../../data/first_round_testing_data.csv')
+submit = pd.read_csv('../../data/submit_example.csv')
+
+for predcol in submit.columns[1:]:
+    test[predcol] = 0
+train[ycol] = train.Quality_label.map({'Excellent':0,'Good':1,'Pass':2,'Fail':3})
+dropcols=['Parameter1', 'Parameter2', 'Parameter3', 'Parameter4', 'Attribute1', 'Attribute2', 
+          'Attribute3', 'Attribute4', 'Attribute5', 'Attribute6', 'Attribute7', 'Attribute8', 
+          'Attribute9', 'Attribute10', 'Quality_label', ycol]
+
+feature_names=list(filter(lambda x:x not in dropcols,train.columns))
+print(feature_names)
+esti='LGB'
+oof,test,cv_model=model_cv(train,test,esti,feature_names)
+submit = test.groupby(['Group'],as_index=False)[submit.columns[1:]].mean()
+submit.to_csv('lgb_submit.csv',index=False)
+
+
+
